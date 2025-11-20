@@ -1,18 +1,7 @@
 #include <SX126x_driver.h>
-#include <GyverPWM.h>
-
-//Dosimeter variables
-volatile unsigned long counter = 0;
-volatile uint32_t Value = 0;
-volatile bool flagg = false;
-//Voltage stabilizer PID
-uint16_t voltage = 0;
-const uint16_t target_voltage = 350;
-float pulse_width = 25;
-const float k_i = 1;
 
 // Pin setting
-int8_t nssPin = 10, resetPin = 8, busyPin = 4, irqPin = 3;
+int8_t nssPin = 10, resetPin = 8, busyPin = 4, irqPin = 3, rxenPin = -1, txenPin = -1;
 
 // Clock reference setting. RF module using either TCXO or XTAL as clock reference
 // uncomment code below to use XTAL
@@ -55,7 +44,6 @@ volatile bool transmitted = false;
 
 void checkTransmitDone() {
   transmitted = true;
-  digitalWrite(2, HIGH);
 }
 
 void settingFunction() {
@@ -90,7 +78,14 @@ void settingFunction() {
   sx126x_writeRegister(SX126X_REG_XTA_TRIM, xtalCap, 2);
 #endif
 
-
+  // Optionally configure DIO2 as RF switch control
+#ifdef SX126X_USING_TXEN_RXEN
+  pinMode(txenPin, OUTPUT);
+  pinMode(rxenPin, OUTPUT);
+#else
+  Serial.println("Set RF switch is controlled by DIO2");
+  sx126x_setDio2AsRfSwitchCtrl(SX126X_DIO2_AS_RF_SWITCH);
+#endif
 
   // Set packet type to LoRa
   Serial.println("Set packet type to LoRa");
@@ -158,6 +153,11 @@ uint16_t transmitFunction(char* message, uint8_t length, uint32_t timeout) {
   // Attach irqPin to DIO1
   Serial.println("Attach interrupt on IRQ pin");
   attachInterrupt(digitalPinToInterrupt(irqPin), checkTransmitDone, RISING);
+  // Set txen and rxen pin state for transmitting packet
+#ifdef SX126X_USING_TXEN_RXEN
+  digitalWrite(txenPin, HIGH);
+  digitalWrite(rxenPin, LOW);
+#endif
 
   // Calculate timeout (timeout duration = timeout * 15.625 us)
   uint32_t tOut = timeout * 64;
@@ -184,6 +184,9 @@ uint16_t transmitFunction(char* message, uint8_t length, uint32_t timeout) {
   sx126x_getIrqStatus(&irqStat);
   Serial.println("Clear IRQ status");
   sx126x_clearIrqStatus(irqStat);
+#ifdef SX126X_USING_TXEN_RXEN
+  digitalWrite(txenPin, LOW);
+#endif
 
   // return interrupt status
   return irqStat;
@@ -193,60 +196,13 @@ void setup() {
 
   // Begin serial communication
   Serial.begin(9600);
-  pinMode(9, OUTPUT);
-  pinMode(2, OUTPUT);
-  PWM_frequency(9, 20500, FAST_PWM);
-  PWM_set(9, pulse_width);
 
-  ACSR= 
-        (0<<ACD) |   // Analog Comparator: Enabled
-        (0<<ACBG) |   // Analog Comparator Bandgap Select: AIN0 is applied to the positive input
-        //(1<<ACO) |   // Analog Comparator Output: On
-        //(1<<ACI) |   // Analog Comparator Interrupt Flag: Clear Pending Interrupt
-        (1<<ACIE) |   // Analog Comparator Interrupt: Enabled
-        (0<<ACIC) |   // Analog Comparator Input Capture: Disabled
-        (1<<ACIS1) | (0<ACIS0); // По НИСПАДАЮЩЕМУ фронту
-  
-  noInterrupts();
-  TCCR2A=0;
-  TCCR2B = 0;
-  TCNT2 = 0;
-  
-  OCR2A=15625;
-  TCCR2A |= (1<< WGM21);
-  TCCR2B |= (1<< CS22) | (1<< CS21) | (1<<CS20);
-  TIMSK2 |= (1<< OCIE2A);
-  interrupts();
   // Settings for LoRa communication
   settingFunction();
 }
-ISR(ANALOG_COMP_vect) {
-    counter+=1;
-  }
-  ISR(TIMER2_COMPA_vect) {
-    /*static unit16_t interruptCount = 0;
-    interruptCount+=1;*/
-    //Serial.println(millis());
-    flagg=true;
-    
-  }
+
 void loop() {
-  if (flagg){
-    flagg = false;
-    Value=counter;
-    counter=0;
-    voltage = (float)analogRead(A0) / 255 * 500;
-    pulse_width += k_i * (target_voltage - voltage);
-    PWM_set(9, 100);
-    Serial.print("Dosimeter readings: ");
-    Serial.println(Value);
-    Serial.print("Dosimeter voltage: ");
-    Serial.println(voltage);
-    Serial.print("A0 readings: ");
-    Serial.println(analogRead(A0));
-    Serial.print("PWM fill coefficient: ");
-    Serial.println(pulse_width / 255);
-  }
+
   // Message to transmit
   char message[] = "HeLoRa World";
   uint8_t nBytes = sizeof(message);
@@ -259,8 +215,6 @@ void loop() {
   if (status & SX126X_IRQ_TIMEOUT){
     Serial.println("Transmit timeout");
   }
-  delay(100);
-  digitalWrite(2, LOW);
 
   // Don't load RF module with continous transmit
   delay(10000);

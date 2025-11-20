@@ -1,15 +1,32 @@
 #include <SX126x_driver.h>
 #include <GyverPWM.h>
 
+//Number of seconds for interrupt
+volatile int sec_interrupt = 0;
+volatile int PID_count =0 ;
+volatile int transmit_count=0;
+
+//Pid regulator
+int32_t voltage = 0;
+int32_t target_voltage = 300;
+int32_t err = 175;
+int32_t err_i = 0;
+int32_t err_old = 0;
+int pulse_width = 25;
+const float k_p = 0.1;
+const float k_i = 0.01;
+const float k_d = 0;
+
+
 //Dosimeter variables
 volatile unsigned long counter = 0;
 volatile uint32_t Value = 0;
 volatile bool flagg = false;
 //Voltage stabilizer PID
-uint16_t voltage = 0;
-const uint16_t target_voltage = 350;
+/*uint16_t voltage = 0;
+const uint16_t target_voltage = 175;
 float pulse_width = 25;
-const float k_i = 1;
+const float k_i = 1;*/
 
 // Pin setting
 int8_t nssPin = 10, resetPin = 8, busyPin = 4, irqPin = 3;
@@ -125,6 +142,7 @@ void settingFunction() {
 }
 
 uint16_t transmitFunction(char* message, uint8_t length, uint32_t timeout) {
+  
 
   Serial.println("\n-- TRANSMIT FUNCTION --");
 
@@ -159,6 +177,7 @@ uint16_t transmitFunction(char* message, uint8_t length, uint32_t timeout) {
   Serial.println("Attach interrupt on IRQ pin");
   attachInterrupt(digitalPinToInterrupt(irqPin), checkTransmitDone, RISING);
 
+
   // Calculate timeout (timeout duration = timeout * 15.625 us)
   uint32_t tOut = timeout * 64;
   // Set RF module to TX mode to transmit message
@@ -168,7 +187,7 @@ uint16_t transmitFunction(char* message, uint8_t length, uint32_t timeout) {
 
   // Wait for TX done interrupt and calcualte transmit time
   Serial.println("Wait for TX done interrupt");
-  while (!transmitted) delayMicroseconds(4);
+  //while (!transmitted) delayMicroseconds(4);
   tTrans = millis() - tStart;
   // Clear transmit interrupt flag
   transmitted = false;
@@ -190,7 +209,6 @@ uint16_t transmitFunction(char* message, uint8_t length, uint32_t timeout) {
 }
 
 void setup() {
-
   // Begin serial communication
   Serial.begin(9600);
   pinMode(9, OUTPUT);
@@ -212,56 +230,101 @@ void setup() {
   TCCR2B = 0;
   TCNT2 = 0;
   
-  OCR2A=15625;
+  //OCR2A=15625;
+  OCR2A=255;
   TCCR2A |= (1<< WGM21);
   TCCR2B |= (1<< CS22) | (1<< CS21) | (1<<CS20);
   TIMSK2 |= (1<< OCIE2A);
   interrupts();
   // Settings for LoRa communication
-  settingFunction();
+  //settingFunction();
 }
+
 ISR(ANALOG_COMP_vect) {
     counter+=1;
-  }
-  ISR(TIMER2_COMPA_vect) {
-    /*static unit16_t interruptCount = 0;
-    interruptCount+=1;*/
-    //Serial.println(millis());
+}
+  ISR(TIMER2_COMPA_vect) { // ПРЕРЫВАНИЕ
     flagg=true;
+    sec_interrupt +=1;
+    PID_count+=1;
+    transmit_count+=1;
     
-  }
+}
 void loop() {
-  if (flagg){
-    flagg = false;
-    Value=counter;
-    counter=0;
-    voltage = (float)analogRead(A0) / 255 * 500;
-    pulse_width += k_i * (target_voltage - voltage);
-    PWM_set(9, 100);
-    Serial.print("Dosimeter readings: ");
-    Serial.println(Value);
+  
+  if (PID_count>=60){
+    PID_count=0;
+
+    voltage = (float)analogRead(A0) / 1023 * 500;
+    err = target_voltage - voltage;
+    pulse_width += k_p * (target_voltage - voltage)  + k_i * err_i + k_d * (err - err_old);
+    if(pulse_width > 128)
+      pulse_width = 128;
+    PWM_set(9, pulse_width);
+    err_old = err;
+    err_i += min(err, 20);
+    Serial.println("---------------------------");
     Serial.print("Dosimeter voltage: ");
     Serial.println(voltage);
-    Serial.print("A0 readings: ");
-    Serial.println(analogRead(A0));
     Serial.print("PWM fill coefficient: ");
-    Serial.println(pulse_width / 255);
+    Serial.println((float)pulse_width / 255);
+    Serial.print("Error: ");
+    Serial.println(err);
+    Serial.print("Integral error: ");
+    Serial.println(err_i);
+    Serial.println("---------------------------");
+    
   }
-  // Message to transmit
   char message[] = "HeLoRa World";
   uint8_t nBytes = sizeof(message);
 
-  // Transmit message
+    // Transmit message
   uint32_t timeout = 1000; // 1000 ms timeout
-  uint16_t status = transmitFunction(message, nBytes, timeout);
-
-  // Display status if error
-  if (status & SX126X_IRQ_TIMEOUT){
-    Serial.println("Transmit timeout");
+//    uint16_t status = transmitFunction(message, nBytes, timeout);
+  if (transmit_count>=240) {
+    transmit_count=0;
+    if (!transmitted){ // Если передачи нет =>
+      //uint16_t status = transmitFunction(message, nBytes, timeout);
+      delay(100);
+      digitalWrite(2, LOW);
+    }
+    else{
+      Serial.println("Noot! TRANS!");}
   }
-  delay(100);
-  digitalWrite(2, LOW);
 
-  // Don't load RF module with continous transmit
-  delay(10000);
+  if (sec_interrupt>=600){
+    sec_interrupt=0;
+    if (flagg){ // то есть, это выполняется только по прерыванию для дозиметра
+      flagg = false;
+      Value=counter;
+      counter=0;
+
+      Serial.println("+++++++++++++++++++++++++++");
+      Serial.print("Dosimeter readings: ");
+      Serial.println(Value);
+      Serial.print("Dosimeter voltage: ");
+      Serial.println(voltage);
+      Serial.print("A0 readings: ");
+      Serial.println(analogRead(A0));
+      Serial.print("PWM fill coefficient: ");
+      Serial.println((float)pulse_width / 255);
+      Serial.println("+++++++++++++++++++++++++++");
+
+    }
+    /* Вне  if нужно тоже добавить, так как контролировать выходное напряжение преобразователя 
+    нужно всегда, не только в момент вывода на экран */
+
+    // Message to transmit
+    
+    
+    // Display status if error
+//    if (status & SX126X_IRQ_TIMEOUT){
+//      Serial.println("Transmit timeout");
+//    }
+
+    // Don't load RF module with continous transmit
+    /*delay(10000); */ //Ждем мертвые 10 секунд, избавиться - реализовать по таймеру функцию прерывания, 
+    //в котором изменяются флаги 
+  }
+  
 }
