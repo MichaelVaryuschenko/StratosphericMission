@@ -263,7 +263,7 @@ void loop() {
     PWM_set(9, pulse_width);
     err_old = err;
     err_i += min(err, 20);
-    Serial.println("---------------------------");
+    /*Serial.println("---------------------------");
     Serial.print("Dosimeter voltage: ");
     Serial.println(voltage);
     Serial.print("PWM fill coefficient: ");
@@ -272,7 +272,7 @@ void loop() {
     Serial.println(err);
     Serial.print("Integral error: ");
     Serial.println(err_i);
-    Serial.println("---------------------------");
+    Serial.println("---------------------------");*/
     
   }
   char message[] = "HeLoRa World";
@@ -299,16 +299,16 @@ void loop() {
       Value=counter;
       counter=0;
 
-      Serial.println("+++++++++++++++++++++++++++");
+      //Serial.println("+++++++++++++++++++++++++++");
       Serial.print("Dosimeter readings: ");
-      Serial.println(Value);
-      Serial.print("Dosimeter voltage: ");
+      Serial.print(Value);
+      Serial.print("; Dosimeter voltage: ");
       Serial.println(voltage);
-      Serial.print("A0 readings: ");
+      /*Serial.print("A0 readings: ");
       Serial.println(analogRead(A0));
       Serial.print("PWM fill coefficient: ");
       Serial.println((float)pulse_width / 255);
-      Serial.println("+++++++++++++++++++++++++++");
+      Serial.println("+++++++++++++++++++++++++++");*/
 
     }
     /* Вне  if нужно тоже добавить, так как контролировать выходное напряжение преобразователя 
