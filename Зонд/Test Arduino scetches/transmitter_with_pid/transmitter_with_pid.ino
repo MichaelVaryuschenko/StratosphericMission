@@ -1,5 +1,9 @@
 #include <SX126x_driver.h>
 #include <GyverPWM.h>
+#include <SPI.h>                                    // Стандартная библиотека шины SPI
+#include <Adafruit_BMP280.h>                        // Библиотека датчика
+#define BMP_CS 5                                   // CS подключено на 10 пин
+Adafruit_BMP280 bmp280SPI(BMP_CS); 
 
 //Number of seconds for interrupt
 volatile int sec_interrupt = 0;
@@ -8,7 +12,7 @@ volatile int transmit_count=0;
 
 //Pid regulator
 int32_t voltage = 0;
-int32_t target_voltage = 300;
+int32_t target_voltage = 270;
 int32_t err = 175;
 int32_t err_i = 0;
 int32_t err_old = 0;
@@ -147,7 +151,7 @@ uint16_t transmitFunction(char* message, uint8_t length, uint32_t timeout) {
   Serial.println("\n-- TRANSMIT FUNCTION --");
 
   // Set buffer base address
-  Serial.println("Mark a pointer in buffer for transmit message");
+  //Serial.println("Mark a pointer in buffer for transmit message");
   sx126x_setBufferBaseAddress(0x00, 0x80);
 
   // Write the message to buffer
@@ -155,38 +159,38 @@ uint16_t transmitFunction(char* message, uint8_t length, uint32_t timeout) {
   Serial.print("Write message \'");
   Serial.print(message);
   Serial.println("\' in buffer");
-  Serial.print("Message in bytes : [ ");
+  //Serial.print("Message in bytes : [ ");
   sx126x_writeBuffer(0x00, msgUint8, length);
-  for (uint8_t i = 0; i < length; i++) {
-    Serial.print((uint8_t) message[i]);
-    Serial.print("  ");
-  }
-  Serial.println("]");
+  //for (uint8_t i = 0; i < length; i++) {
+  //  Serial.print((uint8_t) message[i]);
+  //  Serial.print("  ");
+  //}
+  //Serial.println("]");
 
   // Set payload length same as message length
-  Serial.print("Set payload length same as message length (");
-  Serial.print(length);
-  Serial.println(")");
+  //Serial.print("Set payload length same as message length (");
+  //Serial.print(length);
+  //Serial.println(")");
   sx126x_setPacketParamsLoRa(preambleLength, headerType, length, crcType, invertIq);
 
   // Activate interrupt when transmit done on DIO1
-  Serial.println("Set TX done and timeout IRQ on DIO1");
+  //Serial.println("Set TX done and timeout IRQ on DIO1");
   uint16_t mask = SX126X_IRQ_TX_DONE | SX126X_IRQ_TIMEOUT;
   sx126x_setDioIrqParams(mask, mask, SX126X_IRQ_NONE, SX126X_IRQ_NONE);
   // Attach irqPin to DIO1
-  Serial.println("Attach interrupt on IRQ pin");
+  //Serial.println("Attach interrupt on IRQ pin");
   attachInterrupt(digitalPinToInterrupt(irqPin), checkTransmitDone, RISING);
 
 
   // Calculate timeout (timeout duration = timeout * 15.625 us)
   uint32_t tOut = timeout * 64;
   // Set RF module to TX mode to transmit message
-  Serial.println("Transmitting LoRa packet");
+  //Serial.println("Transmitting LoRa packet");
   sx126x_setTx(tOut);
   uint32_t tStart = millis(), tTrans = 0;
 
   // Wait for TX done interrupt and calcualte transmit time
-  Serial.println("Wait for TX done interrupt");
+  //Serial.println("Wait for TX done interrupt");
   //while (!transmitted) delayMicroseconds(4);
   tTrans = millis() - tStart;
   // Clear transmit interrupt flag
@@ -194,14 +198,14 @@ uint16_t transmitFunction(char* message, uint8_t length, uint32_t timeout) {
   Serial.println("Packet transmitted!");
 
   // Display transmit time
-  Serial.print("Transmit time = ");
-  Serial.print(tTrans);
-  Serial.println(" ms");
+  //Serial.print("Transmit time = ");
+  //Serial.print(tTrans);
+  //Serial.println(" ms");
 
   // Clear the interrupt status
   uint16_t irqStat;
   sx126x_getIrqStatus(&irqStat);
-  Serial.println("Clear IRQ status");
+  //Serial.println("Clear IRQ status");
   sx126x_clearIrqStatus(irqStat);
 
   // return interrupt status
@@ -209,8 +213,26 @@ uint16_t transmitFunction(char* message, uint8_t length, uint32_t timeout) {
 }
 
 void setup() {
+  pinMode(BMP_CS, OUTPUT);
+  pinMode(nssPin, OUTPUT);
+  digitalWrite(BMP_CS, HIGH); 
+  digitalWrite(nssPin, HIGH); 
+
+  digitalWrite(BMP_CS, LOW);
+  digitalWrite(nssPin, HIGH);
   // Begin serial communication
-  Serial.begin(9600);
+  Serial.begin(9600);                               // Инициализируем монитор порта на скорости 9600
+  Serial.println("Перезагрузка");                   // Печатаем: Перезагрузка
+  if(bmp280SPI.begin())                             // Инициализируем датчик 
+    Serial.println("BMP280 подключен по SPI");      // Если успешно печатаем: BMP280 подключен по SPI
+    else{                                           // Иначе
+      Serial.println("BMP280 не подключен");        // Печатаем: BMP280 не подключен
+      while(1);                                     // Заканчиваем выполнение
+        }
+  //delay(2000);                                      // Пауза в 2 секунды  
+
+  digitalWrite(BMP_CS, HIGH);
+  digitalWrite(nssPin, LOW);
   pinMode(9, OUTPUT);
   pinMode(2, OUTPUT);
   PWM_frequency(9, 20500, FAST_PWM);
@@ -237,7 +259,7 @@ void setup() {
   TIMSK2 |= (1<< OCIE2A);
   interrupts();
   // Settings for LoRa communication
-  //settingFunction();
+  settingFunction();
 }
 
 ISR(ANALOG_COMP_vect) {
@@ -248,50 +270,45 @@ ISR(ANALOG_COMP_vect) {
     sec_interrupt +=1;
     PID_count+=1;
     transmit_count+=1;
+      if (PID_count>=60){
+      PID_count=0;
+
+      voltage = (float)analogRead(A0) / 1023 * 420;
+      err = target_voltage - voltage;
+      pulse_width += k_p * (target_voltage - voltage)  + k_i * err_i + k_d * (err - err_old);
+      if(pulse_width > 128)
+        pulse_width = 128;
+      PWM_set(9, pulse_width);
+      err_old = err;
+      err_i += min(err, 20);
+      Serial.println("---------------------------");
+      Serial.print("Dosimeter voltage: ");
+      Serial.println(voltage);
+      Serial.print("PWM fill coefficient: ");
+      Serial.println((float)pulse_width / 255);
+      Serial.print("Error: ");
+      Serial.println(err);
+      Serial.print("Integral error: ");
+      Serial.println(err_i);
+      Serial.println("---------------------------");
+      
+    }
+    if(sec_interrupt>=50) {
+      digitalWrite(2, LOW);
+    }
     
 }
-void loop() {
+void loop() {digitalWrite(BMP_CS, LOW); // выбор датчика в качестве собеседника
   
-  if (PID_count>=60){
-    PID_count=0;
 
-    voltage = (float)analogRead(A0) / 1023 * 500;
-    err = target_voltage - voltage;
-    pulse_width += k_p * (target_voltage - voltage)  + k_i * err_i + k_d * (err - err_old);
-    if(pulse_width > 128)
-      pulse_width = 128;
-    PWM_set(9, pulse_width);
-    err_old = err;
-    err_i += min(err, 20);
-    /*Serial.println("---------------------------");
-    Serial.print("Dosimeter voltage: ");
-    Serial.println(voltage);
-    Serial.print("PWM fill coefficient: ");
-    Serial.println((float)pulse_width / 255);
-    Serial.print("Error: ");
-    Serial.println(err);
-    Serial.print("Integral error: ");
-    Serial.println(err_i);
-    Serial.println("---------------------------");*/
-    
-  }
-  char message[] = "HeLoRa World";
+  
+  
+  char message[4];
   uint8_t nBytes = sizeof(message);
 
     // Transmit message
   uint32_t timeout = 1000; // 1000 ms timeout
-//    uint16_t status = transmitFunction(message, nBytes, timeout);
-  if (transmit_count>=240) {
-    transmit_count=0;
-    if (!transmitted){ // Если передачи нет =>
-      //uint16_t status = transmitFunction(message, nBytes, timeout);
-      delay(100);
-      digitalWrite(2, LOW);
-    }
-    else{
-      Serial.println("Noot! TRANS!");}
-  }
-
+  
   if (sec_interrupt>=600){
     sec_interrupt=0;
     if (flagg){ // то есть, это выполняется только по прерыванию для дозиметра
@@ -299,18 +316,51 @@ void loop() {
       Value=counter;
       counter=0;
 
-      //Serial.println("+++++++++++++++++++++++++++");
+      Serial.println("+++++++++++++++++++++++++++");
       Serial.print("Dosimeter readings: ");
-      Serial.print(Value);
-      Serial.print("; Dosimeter voltage: ");
+      Serial.print((float)Value / 62);
+      Serial.print(" uSv/h; Dosimeter voltage: ");
       Serial.println(voltage);
       /*Serial.print("A0 readings: ");
       Serial.println(analogRead(A0));
       Serial.print("PWM fill coefficient: ");
-      Serial.println((float)pulse_width / 255);
-      Serial.println("+++++++++++++++++++++++++++");*/
+      Serial.println((float)pulse_width / 255);*/
+      Serial.println("+++++++++++++++++++++++++++");
+      for (int i = 0; i < 4; i++) {
+        message[3 - i] = Value % 10 + 48;
+        Value /= 10;
+      }
+      uint16_t status = transmitFunction(message, 4, timeout);
+      digitalWrite(nssPin, HIGH);
+
+    float temperature = bmp280SPI.readTemperature();  // Считываем показания температуры в градусах Цельсия
+    float pressure = bmp280SPI.readPressure();        // Считываем показания давления в Паскалях
+    float altitude = bmp280SPI.readAltitude(1013.25); // Расчитываем высоту относительно уровня моря  
+//    Serial.print("Temperature = ");                   // Печатаем Temperature = 
+//    Serial.print(temperature);                        // Печатаем значение температуры в грудусах Цельсия
+//    Serial.println(" *C");                            // Печатаем *С
+  
+    Serial.print("Pressure = ");                      // Печатаем Pressure = 
+    Serial.print(pressure);                           // Печатаем значение давления в Паскалях
+    Serial.println(" Па");                            // Печатаем Па
+
+    Serial.print("Pressure = ");                      // Печатаем Pressure = 
+    Serial.print(pressure*0.00750063755419211);       // Печатаем значение давления переведенное в мм рт.ст.
+    Serial.println(" мм рт.ст.");                     // Печатаем мм рт.ст.
+  
+    Serial.print("Altitude = ");                      // Печатаем Altitude =
+    Serial.print(altitude);                           // Печатаем значение высоты относительно уровня моря в метрах
+    Serial.println(" м");                             // Печатаем м 
+    Serial.println();                                 // Печатаем пустую строку для разделения
+    //delay(2000);                                      // Пауза в 2 секунды
+
+    digitalWrite(BMP_CS, HIGH);
+    digitalWrite(nssPin, LOW);
 
     }
+  }
+
+  
     /* Вне  if нужно тоже добавить, так как контролировать выходное напряжение преобразователя 
     нужно всегда, не только в момент вывода на экран */
 
@@ -325,6 +375,5 @@ void loop() {
     // Don't load RF module with continous transmit
     /*delay(10000); */ //Ждем мертвые 10 секунд, избавиться - реализовать по таймеру функцию прерывания, 
     //в котором изменяются флаги 
-  }
   
 }
